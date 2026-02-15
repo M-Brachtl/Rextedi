@@ -1,4 +1,4 @@
-use std::{io::{Write, stdout}, vec};
+use std::{env, fs, io::{Write, stdout}, path::{Path, PathBuf}, vec};
 
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
@@ -12,12 +12,25 @@ use crossterm::{
 
 fn main() -> std::io::Result<()> {
     let mut stdout = stdout();
+    let mut run_args = env::args();
+    let _ = run_args.next(); // skip executed file arg
+    let mut file_content = String::new();
+    let filepath = if let Some(ref filename) = run_args.next() {
+        file_content = load_file(Path::new(filename));
+        PathBuf::from(filename.clone())
+    } else {
+        PathBuf::new()
+    };
+    if filepath == PathBuf::new() {
+        println!("Rextedi: No file path");
+        return Ok(());
+    }
 
     // Enable raw mode
     enable_raw_mode()?;
-    execute!(stdout, EnterAlternateScreen, Hide)?;
+    execute!(stdout, Clear(ClearType::All), EnterAlternateScreen, Hide)?;
 
-    let result = run(&mut stdout);
+    let result = run(&mut stdout, file_content, filepath.as_path());
 
     // ALWAYS restore terminal
     disable_raw_mode()?;
@@ -26,17 +39,32 @@ fn main() -> std::io::Result<()> {
     result
 }
 
-fn run(stdout: &mut std::io::Stdout) -> std::io::Result<()> {
+fn load_file(file_name: &Path) -> String {
+    match fs::read_to_string(file_name){
+        Ok(content) => content,
+        Err(_) => {
+            fs::File::create(file_name).expect("Failed to create file");
+            String::new()
+        },
+    }
+}
+
+fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) -> std::io::Result<()> {
     // let mut input = String::new();
-    let mut lines = vec!["".to_string()];
+    let mut lines = if starting_text != "" {
+        starting_text.replace("\r\n", "\n").split('\n').map(|text| text.to_string()).collect()
+    } else {
+        vec!["".to_string()]
+    };
     let mut active_line = 0;
     let mut cursor = crossterm::cursor::position()?;
+    let (width, _height) = crossterm::terminal::size().unwrap();
 
     // let height = crossterm::terminal::size()?.1;
 
-    init_draw(stdout)?;
+    init_draw(stdout, &lines, width as usize)?;
     loop {
-        draw(stdout, &lines[active_line], cursor)?;
+        draw(stdout, &lines[active_line], cursor, width as usize)?;
         // Block until key press (no infinite printing)
         if let Event::Key(key) = read()? {
             if key.kind == crossterm::event::KeyEventKind::Press {
@@ -45,6 +73,11 @@ fn run(stdout: &mut std::io::Stdout) -> std::io::Result<()> {
                         // lines[active_line].push('q');
                         write_char(&mut lines[active_line], 'q', &mut cursor.0);
                     },
+                    KeyCode::Char('w') => if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+                        fs::write(file_name, lines.join("\n"))?;
+                    } else {
+                        write_char(&mut lines[active_line], 'w', &mut cursor.0);
+                    }
                     KeyCode::Char(c) => if !key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) { write_char(&mut lines[active_line], c, &mut cursor.0); }
                     KeyCode::Backspace => {
                         if cursor.0 > 0 {
@@ -52,12 +85,12 @@ fn run(stdout: &mut std::io::Stdout) -> std::io::Result<()> {
                             // cursor.0 -= 1;
                             remove_char(&mut lines[active_line], &mut cursor.0);
                             execute!(stdout, MoveTo(cursor.0, cursor.1 + 3))?;
-                        } else {
+                        } else if cursor.1 > 0{
                             let removed_line_content = lines[active_line].clone();
                             lines[active_line-1].push_str(&removed_line_content);
                             lines.remove(active_line);
                             active_line -= 1;
-                            draw_new_line(stdout, &lines, cursor)?;
+                            draw_new_line(stdout, &lines, cursor, width as usize)?;
                             cursor.0 = lines[active_line].len() as u16 - removed_line_content.len() as u16;
                             cursor.1 -= 1;
                         }
@@ -65,7 +98,7 @@ fn run(stdout: &mut std::io::Stdout) -> std::io::Result<()> {
                     KeyCode::Enter => {
                         let new_line_content = lines[active_line].split_off(cursor.0 as usize);
                         lines.insert(active_line + 1, new_line_content);
-                        draw_new_line(stdout, &lines, cursor)?;
+                        draw_new_line(stdout, &lines, cursor, width as usize)?;
                         active_line += 1;
                         cursor.0 = 0;
                         cursor.1 += 1;
@@ -111,27 +144,39 @@ fn run(stdout: &mut std::io::Stdout) -> std::io::Result<()> {
     Ok(())
 }
 
-fn init_draw(stdout: &mut std::io::Stdout) -> std::io::Result<()> {
+fn init_draw(stdout: &mut std::io::Stdout, lines: &Vec<String>, max_width: usize) -> std::io::Result<()> {
+    let mut display_lines = Vec::new();
+    for line in lines {
+        if line.len() > max_width {
+            display_lines.push(line.split_at(max_width).0.to_string());
+        } else {
+            display_lines.push(line.clone());
+        }
+    }
     execute!(
         stdout,
         crossterm::cursor::Show,
         MoveTo(0,0),
         Clear(ClearType::All),
         Print("Persistent Crossterm TUI\n".bold()),
-        Print("Press 'ctrl + q' to quit\n\n"),
-        Print("Your input:\n"),
+        Print("Press 'ctrl + q' to quit\t Press 'ctrl + w' to write into a file\n\n"),
+        Print(display_lines.join("\n")),
     )?;
     stdout.flush()?;
     Ok(())
 }
 
-fn draw(stdout: &mut std::io::Stdout, line: &String, cursor_pos: (u16, u16)) -> std::io::Result<()> {
+fn draw(stdout: &mut std::io::Stdout, line: &String, cursor_pos: (u16, u16), max_width: usize) -> std::io::Result<()> {
     execute!(
         stdout,
         crossterm::cursor::Hide,
         MoveTo(0, cursor_pos.1 + 3),
         Clear(ClearType::CurrentLine),
-        Print(line),
+        Print(if line.len() > max_width {
+            line.split_at(max_width).0
+        } else {
+            line
+        }),
         MoveTo(cursor_pos.0, cursor_pos.1 + 3),
         crossterm::cursor::Show
     )?;
@@ -139,14 +184,18 @@ fn draw(stdout: &mut std::io::Stdout, line: &String, cursor_pos: (u16, u16)) -> 
     Ok(())
 }
 
-fn draw_new_line(stdout: &mut std::io::Stdout, lines: &Vec<String>, cursor_pos: (u16, u16)) -> std::io::Result<()> {
+fn draw_new_line(stdout: &mut std::io::Stdout, lines: &Vec<String>, cursor_pos: (u16, u16), max_width: usize) -> std::io::Result<()> {
     let (_, moved_lines) = lines.split_at(cursor_pos.1 as usize);
     execute!(stdout, crossterm::cursor::Hide, Clear(ClearType::FromCursorDown))?;
     for (index, line) in moved_lines.iter().enumerate(){
         execute!(
             stdout,
             MoveTo(0, cursor_pos.1 + index as u16 + 3),
-            Print(line),
+            Print(if line.len() > max_width {
+                line.split_at(max_width).0
+            } else {
+                line
+            }),
         )?;
     }
     execute!(
@@ -165,7 +214,7 @@ fn write_char(line: &mut String, c: char, cursor_x: &mut u16) {
 }
 
 fn remove_char(line: &mut String, cursor_x: &mut u16) {
-    let byte_index = line.char_indices().nth(*cursor_x as usize).map(|(i, _)| i).unwrap_or(line.len());
+    let byte_index = line.char_indices().nth(*cursor_x as usize - 1).map(|(i, _)| i).unwrap_or(line.len());
     line.remove(byte_index);
     *cursor_x -= 1;
 }
