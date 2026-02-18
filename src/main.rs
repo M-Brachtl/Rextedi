@@ -1,12 +1,16 @@
 use std::{env, fs, io::{Write, stdout}, path::{Path, PathBuf}, vec};
 
 use crossterm::{
-    cursor::{Hide, MoveTo, Show}, event::{Event, KeyCode, KeyModifiers, read}, execute, queue, style::{Color, Print, Stylize}, terminal::{
+    cursor::{Hide, MoveTo, Show},
+    event::{Event, KeyCode, KeyModifiers, read, MouseEventKind},
+    execute, queue,
+    style::{Color, Print, Stylize}, terminal::{
         Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode
     }
 };
 
 static HEADER_HEIGHT: u16 = 3;
+static DEBUG_MODE: bool = false;
 
 fn main() -> std::io::Result<()> {
     let mut stdout = stdout();
@@ -46,8 +50,18 @@ fn load_file(file_name: &Path) -> String {
     }
 }
 
-fn save_file(file_name: &Path, content: String) -> std::io::Result<()> {
-    fs::write(file_name, content)
+fn save_file(file_name: &Path, content: String, log: &mut Option<Log>) -> std::io::Result<()> {
+    let result = fs::write(file_name, content);
+    match result {
+        Ok(_) => {
+            *log = Some(Log::new("File saved".to_string()));
+            Ok(())
+        },
+        Err(e) => {
+            eprintln!("Failed to write to file: {}", e);
+            Err(e)
+        }
+    }
 }
 
 fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) -> std::io::Result<()> {
@@ -61,17 +75,27 @@ fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) ->
     let mut log: Option<Log> = None;
     let mut active_line = 0;
     let mut cursor = crossterm::cursor::position()?;
-    let (width, _height) = crossterm::terminal::size().unwrap();
+    let size = crossterm::terminal::size().unwrap();
+    let (width, height) = (size.0 as usize, size.1 as usize - HEADER_HEIGHT as usize - 1); // -1 for log line
     let mut hor_offset: u16 = 0;
+    let mut ver_offset: u16 = 0;
+    let debug_log: Option<Log> = if DEBUG_MODE {
+        Some(Log::new(String::from("Debug log: ")))
+    } else {
+        None
+    };
 
-    init_draw(stdout, &lines, width as usize)?;
+    init_draw(stdout, &lines, width, height)?;
     loop {
         draw(stdout, &lines[active_line], cursor, width as usize, hor_offset)?;
+        if DEBUG_MODE {
+            debug_log.as_ref().unwrap().draw_debug(stdout, &format!("Debug log: ActiveLine: {}, Cursor: ({}, {}), HorOffset: {}, VerOffset: {}", active_line, cursor.0, cursor.1, hor_offset, ver_offset), height, cursor)?;
+        }
         if let Some(log_instance) = &log {
             if log_instance.timestamp.elapsed().unwrap().as_secs() < 5 {
-                log_instance.draw_log(stdout, &log_instance.message, _height, cursor)?;
+                log_instance.draw_log(stdout, &log_instance.message, height, cursor)?;
             } else {
-                log_instance.clear_log(stdout, _height, cursor)?;
+                log_instance.clear_log(stdout, height, cursor)?;
                 log = None;
             }
         }
@@ -84,7 +108,7 @@ fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) ->
                         write_char(&mut lines[active_line], 'q', &mut cursor.0);
                     },
                     KeyCode::Char('w') => if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
-                        if let Err(_) = save_file(file_name, lines.join(if crlf {"\r\n"} else {"\n"})) {
+                        if let Err(_) = save_file(file_name, lines.join(if crlf {"\r\n"} else {"\n"}), &mut log) {
                             let f = fs::File::create(file_name);
                             match f {
                                 Ok(mut file) => {
@@ -115,8 +139,12 @@ fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) ->
                             let removed_line_content = lines[active_line].clone();
                             lines[active_line-1].push_str(&removed_line_content);
                             lines.remove(active_line);
+                            if cursor.1 == 0 && active_line != 0 {
+                                ver_offset -= 1;
+                                move_text(ver_offset, &lines, cursor, stdout, width, height)?;
+                            }
                             active_line -= 1;
-                            draw_new_line(stdout, &lines, cursor, width as usize)?;
+                            draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
                             cursor.0 = lines[active_line].len() as u16 - removed_line_content.len() as u16;
                             cursor.1 -= 1;
                         }
@@ -124,7 +152,12 @@ fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) ->
                     KeyCode::Enter => {
                         let new_line_content = lines[active_line].split_off((cursor.0 + hor_offset) as usize);
                         lines.insert(active_line + 1, new_line_content);
-                        draw_new_line(stdout, &lines, cursor, width as usize)?;
+                        if cursor.1 + 1 == height as u16 {
+                            ver_offset += 1;
+                            move_text(ver_offset, &lines, cursor, stdout, width, height)?;
+                            cursor.1 = height as u16 - 1;
+                        }
+                        draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
                         hor_offset = 0;
                         active_line += 1;
                         cursor.0 = 0;
@@ -152,8 +185,15 @@ fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) ->
                         if active_line > 0 {
                             hor_offset = 0;
                             draw(stdout, &lines[active_line], cursor, width as usize, hor_offset)?;
+                            // draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
+                            if cursor.1 == 0 && active_line > 0 {
+                                assert!(ver_offset > 0, "### This should not be happenig. VerOffset: {}, ActiveLine: {}", ver_offset, active_line);
+                                ver_offset -= 1;
+                                move_text(ver_offset, &lines, cursor, stdout, width, height)?;
+                            } else {
+                                cursor.1 -= 1;
+                            }
                             active_line -= 1;
-                            cursor.1 -= 1;
                             if cursor.0 > lines[active_line].len() as u16 {
                                 cursor.0 = lines[active_line].len() as u16;
                             }
@@ -164,10 +204,15 @@ fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) ->
                         if active_line < lines.len() - 1 {
                             hor_offset = 0;
                             draw(stdout, &lines[active_line], cursor, width as usize, hor_offset)?;
+                            // draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
                             active_line += 1;
                             cursor.1 += 1;
                             if cursor.0 > lines[active_line].len() as u16 {
                                 cursor.0 = lines[active_line].len() as u16;
+                            } else if cursor.1 >= height as u16 {
+                                ver_offset += 1;
+                                move_text(ver_offset, &lines, cursor, stdout, width, height)?;
+                                cursor.1 = height as u16 - 1;
                             }
                             execute!(stdout, MoveTo(cursor.0, cursor.1 + HEADER_HEIGHT))?;
                         }
@@ -175,21 +220,32 @@ fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) ->
                     _ => {}
                 }
             }
+        } else if let Event::Mouse(m) = read()? {
+            match m.kind {
+                MouseEventKind::Down(_) => {
+                    // code
+                },
+                MouseEventKind::Up(_) => {
+                    // code
+                },
+                _ => {}
+            }
         }
     }
 
     Ok(())
 }
 
-fn init_draw(stdout: &mut std::io::Stdout, lines: &Vec<String>, max_width: usize) -> std::io::Result<()> {
+fn init_draw(stdout: &mut std::io::Stdout, lines: &Vec<String>, max_width: usize, max_height: usize) -> std::io::Result<()> {
     let mut display_lines = Vec::new();
-    for line in lines {
+    for line in lines.iter().take(max_height) {
         if line.len() > max_width {
             display_lines.push(line.split_at(max_width).0.to_string());
         } else {
             display_lines.push(line.clone());
         }
     }
+    //assert!(display_lines.len() > max_height, "This should not be happenig. DLines: {}, MaxHeight: {}", display_lines.len(), max_height); // now should panic always
     let header = " Rextedi \n".bold().with(Color::DarkMagenta).on(Color::White);
     let subheader = "^Q to quit\t ^W to write into a file\t ^[→] to move line right\t ^[←] to move line left\n".with(Color::Blue);
     execute!(
@@ -209,7 +265,7 @@ fn init_draw(stdout: &mut std::io::Stdout, lines: &Vec<String>, max_width: usize
 fn draw(stdout: &mut std::io::Stdout, line: &String, cursor_pos: (u16, u16), max_width: usize, offset: u16) -> std::io::Result<()> {
     let offset_bytes = line.char_indices().nth(offset as usize).map(|(i, _)| i).unwrap_or(line.len());
     let display_line = line[offset_bytes..].chars().take(max_width).collect::<String>();
-    execute!(
+    queue!(
         stdout,
         crossterm::cursor::Hide,
         MoveTo(0, cursor_pos.1 + HEADER_HEIGHT),
@@ -222,13 +278,14 @@ fn draw(stdout: &mut std::io::Stdout, line: &String, cursor_pos: (u16, u16), max
     Ok(())
 }
 
-fn draw_new_line(stdout: &mut std::io::Stdout, lines: &Vec<String>, cursor_pos: (u16, u16), max_width: usize) -> std::io::Result<()> {
+fn draw_new_line(stdout: &mut std::io::Stdout, lines: &Vec<String>, cursor_pos: (u16, u16), max_width: usize, max_height: usize, ver_offset: u16) -> std::io::Result<()> {
     let (_, moved_lines) = lines.split_at(cursor_pos.1 as usize);
     queue!(stdout, crossterm::cursor::Hide, Clear(ClearType::FromCursorDown))?;
-    for (index, line) in moved_lines.iter().enumerate(){
+    for (index, line) in moved_lines[ver_offset as usize..].iter().take(max_height - cursor_pos.1 as usize).enumerate(){
         queue!(
             stdout,
             MoveTo(0, cursor_pos.1 + index as u16 + HEADER_HEIGHT),
+            Clear(ClearType::CurrentLine),
             Print(if line.len() > max_width {
                 line.split_at(max_width).0
             } else {
@@ -257,6 +314,30 @@ fn remove_char(line: &mut String, cursor_x: &mut u16) {
     *cursor_x -= 1;
 }
 
+fn move_text(ver_offset: u16, lines: &Vec<String>, cursor_pos: (u16, u16), stdout: &mut std::io::Stdout, width: usize, height: usize) -> std::io::Result<()> {
+    let (_, display_lines) = lines.split_at(ver_offset as usize);
+    queue!(stdout, crossterm::cursor::Hide, Clear(ClearType::FromCursorDown))?;
+    for (index, line) in display_lines.iter().take(height).enumerate(){
+        queue!(
+            stdout,
+            MoveTo(0, index as u16 + HEADER_HEIGHT),
+            Clear(ClearType::CurrentLine),
+            Print(if line.len() > width {
+                line.split_at(width).0
+            } else {
+                line
+            }),
+        )?;
+    }
+    queue!(
+        stdout,
+        MoveTo(cursor_pos.0, cursor_pos.1 + HEADER_HEIGHT),
+        crossterm::cursor::Show
+    )?;
+    stdout.flush()?;
+    Ok(())
+}
+
 struct Log {
     message: String,
     timestamp: std::time::SystemTime,
@@ -269,10 +350,11 @@ impl Log {
             timestamp: std::time::SystemTime::now(),
         }
     }
-    fn draw_log(&self, stdout: &mut std::io::Stdout, message: &str, height: u16, cursor_pos: (u16, u16)) -> std::io::Result<()> {
+    fn draw_log(&self, stdout: &mut std::io::Stdout, message: &str, height: usize, cursor_pos: (u16, u16)) -> std::io::Result<()> {
+        // assert!(false, "This means the func is being called. #YAY");
         execute!(
             stdout,
-            MoveTo(0, height - 1),
+            MoveTo(0, height as u16 + HEADER_HEIGHT),
             Clear(ClearType::CurrentLine),
             Print(message),
             MoveTo(cursor_pos.0, cursor_pos.1 + HEADER_HEIGHT),
@@ -281,11 +363,23 @@ impl Log {
         Ok(())
     }
     
-    fn clear_log(&self, stdout: &mut std::io::Stdout, height: u16, cursor_pos: (u16, u16)) -> std::io::Result<()> {
+    fn clear_log(&self, stdout: &mut std::io::Stdout, height: usize, cursor_pos: (u16, u16)) -> std::io::Result<()> {
         execute!(
             stdout,
-            MoveTo(0, height - 1),
+            MoveTo(0, height as u16 + HEADER_HEIGHT),
             Clear(ClearType::CurrentLine),
+            MoveTo(cursor_pos.0, cursor_pos.1 + HEADER_HEIGHT),
+        )?;
+        stdout.flush()?;
+        Ok(())
+    }
+
+    fn draw_debug(&self, stdout: &mut std::io::Stdout, message: &str, height: usize, cursor_pos: (u16, u16)) -> std::io::Result<()> {
+        execute!(
+            stdout,
+            MoveTo(0, height as u16 + HEADER_HEIGHT),
+            Clear(ClearType::CurrentLine),
+            Print(message.with(Color::DarkYellow)),
             MoveTo(cursor_pos.0, cursor_pos.1 + HEADER_HEIGHT),
         )?;
         stdout.flush()?;
