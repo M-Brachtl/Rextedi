@@ -75,11 +75,11 @@ fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) ->
     };
     let mut log: Option<Log> = None;
     let mut active_line = 0;
-    let mut cursor = crossterm::cursor::position()?;
+    let mut cursor: (usize, usize) = crossterm::cursor::position().map(|cur| (cur.0 as usize, cur.1 as usize))?;
     let size = crossterm::terminal::size().unwrap();
     let (width, height) = (size.0 as usize, size.1 as usize - HEADER_HEIGHT as usize - 1); // -1 for log line
-    let mut hor_offset: u16 = 0;
-    let mut ver_offset: u16 = 0;
+    let mut hor_offset: usize = 0;
+    let mut ver_offset: usize = 0;
     let debug_log: Option<Log> = if DEBUG_MODE {
         Some(Log::new(String::from("Debug log: ")))
     } else {
@@ -135,7 +135,7 @@ fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) ->
                     KeyCode::Backspace => {
                         if cursor.0 > 0 {
                             remove_char(&mut lines[active_line], &mut cursor.0, &hor_offset);
-                            execute!(stdout, MoveTo(cursor.0, cursor.1 + HEADER_HEIGHT))?;
+                            execute!(stdout, MoveTo(cursor.0 as u16, cursor.1 as u16 + HEADER_HEIGHT))?;
                         } else if cursor.1 > 0 && hor_offset == 0 {
                             let removed_line_content = lines[active_line].clone();
                             lines[active_line-1].push_str(&removed_line_content);
@@ -146,7 +146,7 @@ fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) ->
                             }
                             active_line -= 1;
                             draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
-                            cursor.0 = lines[active_line].graphemes(true).count() as u16 - removed_line_content.graphemes(true).count() as u16;
+                            cursor.0 = lines[active_line].graphemes(true).count() - removed_line_content.graphemes(true).count();
                             cursor.1 -= 1;
                         }
                     }
@@ -155,10 +155,10 @@ fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) ->
                         let new_line_content = lines[active_line].split_off(byte_index);
                         lines.insert(active_line + 1, new_line_content);
                         draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
-                        if cursor.1 + 1 == height as u16 {
+                        if cursor.1 + 1 == height {
                             ver_offset += 1;
                             move_text(ver_offset, &lines, cursor, stdout, width, height)?;
-                            cursor.1 = height as u16 - 1;
+                            cursor.1 = height - 1;
                         } else {
                             cursor.1 += 1;
                         }
@@ -173,15 +173,15 @@ fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) ->
                             }
                         } else if cursor.0 > 0 {
                             cursor.0 -= 1;
-                            execute!(stdout, MoveTo(cursor.0, cursor.1 + HEADER_HEIGHT))?;
+                            execute!(stdout, MoveTo(cursor.0 as u16, cursor.1 as u16 + HEADER_HEIGHT))?;
                         }
                     },
                     KeyCode::Right => {
                         if key.modifiers.contains(KeyModifiers::CONTROL) {
                             hor_offset += 1;
-                        } else if cursor.0 + hor_offset < lines[active_line].graphemes(true).count() as u16 {
+                        } else if cursor.0 + hor_offset < lines[active_line].graphemes(true).count() {
                             cursor.0 += 1;
-                            execute!(stdout, MoveTo(cursor.0, cursor.1 + HEADER_HEIGHT))?;
+                            execute!(stdout, MoveTo(cursor.0 as u16, cursor.1 as u16 + HEADER_HEIGHT))?;
                         }
                     },
                     KeyCode::Up => {
@@ -197,10 +197,10 @@ fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) ->
                                 cursor.1 -= 1;
                             }
                             active_line -= 1;
-                            if cursor.0 + hor_offset > lines[active_line].graphemes(true).count() as u16 {
-                                cursor.0 = lines[active_line].graphemes(true).count() as u16 - hor_offset;
+                            if cursor.0 + hor_offset > lines[active_line].graphemes(true).count() {
+                                cursor.0 = lines[active_line].graphemes(true).count() - hor_offset;
                             }
-                            execute!(stdout, MoveTo(cursor.0, cursor.1 + HEADER_HEIGHT))?;
+                            execute!(stdout, MoveTo(cursor.0 as u16, cursor.1 as u16 + HEADER_HEIGHT))?;
                         }
                     },
                     KeyCode::Down => {
@@ -210,14 +210,14 @@ fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) ->
                             // draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
                             active_line += 1;
                             cursor.1 += 1;
-                            if cursor.0 + hor_offset > lines[active_line].graphemes(true).count() as u16 {
-                                cursor.0 = lines[active_line].graphemes(true).count() as u16 - hor_offset;
-                            } else if cursor.1 >= height as u16 {
+                            if cursor.0 + hor_offset > lines[active_line].graphemes(true).count() {
+                                cursor.0 = lines[active_line].graphemes(true).count() - hor_offset;
+                            } else if cursor.1 >= height {
                                 ver_offset += 1;
                                 move_text(ver_offset, &lines, cursor, stdout, width, height)?;
-                                cursor.1 = height as u16 - 1;
+                                cursor.1 = height - 1;
                             }
-                            execute!(stdout, MoveTo(cursor.0, cursor.1 + HEADER_HEIGHT))?;
+                            execute!(stdout, MoveTo(cursor.0 as u16, cursor.1 as u16 + HEADER_HEIGHT))?;
                         }
                     },
                     _ => {}
@@ -265,29 +265,29 @@ fn init_draw(stdout: &mut std::io::Stdout, lines: &Vec<String>, max_width: usize
     Ok(())
 }
 
-fn draw(stdout: &mut std::io::Stdout, line: &String, cursor_pos: (u16, u16), max_width: usize, offset: u16) -> std::io::Result<()> {
-    let offset_bytes = line.grapheme_indices(true).nth(offset as usize).map(|(i, _)| i).unwrap_or(line.graphemes(true).count());
+fn draw(stdout: &mut std::io::Stdout, line: &String, cursor_pos: (usize, usize), max_width: usize, offset: usize) -> std::io::Result<()> {
+    let offset_bytes = line.grapheme_indices(true).nth(offset).map(|(i, _)| i).unwrap_or(line.graphemes(true).count());
     let display_line = line[offset_bytes..].graphemes(true).take(max_width).collect::<String>();
     queue!(
         stdout,
         crossterm::cursor::Hide,
-        MoveTo(0, cursor_pos.1 + HEADER_HEIGHT),
+        MoveTo(0, cursor_pos.1 as u16 + HEADER_HEIGHT),
         Clear(ClearType::CurrentLine),
         Print(display_line),
-        MoveTo(cursor_pos.0, cursor_pos.1 + HEADER_HEIGHT),
+        MoveTo(cursor_pos.0 as u16, cursor_pos.1 as u16 + HEADER_HEIGHT),
         crossterm::cursor::Show
     )?;
     stdout.flush()?;
     Ok(())
 }
 
-fn draw_new_line(stdout: &mut std::io::Stdout, lines: &Vec<String>, cursor_pos: (u16, u16), max_width: usize, max_height: usize, ver_offset: u16) -> std::io::Result<()> {
+fn draw_new_line(stdout: &mut std::io::Stdout, lines: &Vec<String>, cursor_pos: (usize, usize), max_width: usize, max_height: usize, ver_offset: usize) -> std::io::Result<()> {
     let (_, moved_lines) = lines.split_at((cursor_pos.1 + ver_offset) as usize);
     queue!(stdout, crossterm::cursor::Hide, Clear(ClearType::FromCursorDown))?;
-    if ver_offset > moved_lines.len() as u16 {
+    if ver_offset > moved_lines.len() {
         queue!(
             stdout,
-            MoveTo(0, cursor_pos.1 + HEADER_HEIGHT),
+            MoveTo(0, cursor_pos.1 as u16 + HEADER_HEIGHT),
             // Clear(ClearType::CurrentLine),
         )?;
         stdout.flush()?;
@@ -296,7 +296,7 @@ fn draw_new_line(stdout: &mut std::io::Stdout, lines: &Vec<String>, cursor_pos: 
     for (index, line) in moved_lines[ver_offset as usize..].iter().take(max_height - (cursor_pos.1 + ver_offset) as usize).enumerate(){
         queue!(
             stdout,
-            MoveTo(0, cursor_pos.1 + index as u16 + HEADER_HEIGHT),
+            MoveTo(0, cursor_pos.1 as u16 + index as u16 + HEADER_HEIGHT),
             Clear(ClearType::CurrentLine),
             Print(if line.graphemes(true).count() > max_width {
                 line.split_at(max_width).0
@@ -307,26 +307,26 @@ fn draw_new_line(stdout: &mut std::io::Stdout, lines: &Vec<String>, cursor_pos: 
     }
     queue!(
         stdout,
-        MoveTo(cursor_pos.0, cursor_pos.1 + HEADER_HEIGHT),
+        MoveTo(cursor_pos.0 as u16, cursor_pos.1 as u16 + HEADER_HEIGHT),
         crossterm::cursor::Show
     )?;
     stdout.flush()?;
     Ok(())
 }
 
-fn write_char(line: &mut String, c: char, cursor_x: &mut u16, hor_offset: &u16) {
+fn write_char(line: &mut String, c: char, cursor_x: &mut usize, hor_offset: &usize) {
     let byte_index = line.grapheme_indices(true).nth((*cursor_x + *hor_offset) as usize).map(|(i, _)| i).unwrap_or(line.len()); // at the end has to be len to get byte index, not grapheme index
     line.insert(byte_index, c);
     *cursor_x += 1;
 }
 
-fn remove_char(line: &mut String, cursor_x: &mut u16, hor_offset: &u16) {
+fn remove_char(line: &mut String, cursor_x: &mut usize, hor_offset: &usize) {
     let byte_index = line.grapheme_indices(true).nth((*cursor_x + *hor_offset) as usize - 1).map(|(i, _)| i).unwrap_or(line.len()); // at the end has to be len to get byte index, not grapheme index
     line.remove(byte_index);
     *cursor_x -= 1;
 }
 
-fn move_text(ver_offset: u16, lines: &Vec<String>, cursor_pos: (u16, u16), stdout: &mut std::io::Stdout, width: usize, height: usize) -> std::io::Result<()> {
+fn move_text(ver_offset: usize, lines: &Vec<String>, cursor_pos: (usize, usize), stdout: &mut std::io::Stdout, width: usize, height: usize) -> std::io::Result<()> {
     let (_, display_lines) = lines.split_at(ver_offset as usize);
     queue!(stdout, crossterm::cursor::Hide, Clear(ClearType::FromCursorDown))?;
     for (index, line) in display_lines.iter().take(height).enumerate(){
@@ -343,7 +343,7 @@ fn move_text(ver_offset: u16, lines: &Vec<String>, cursor_pos: (u16, u16), stdou
     }
     queue!(
         stdout,
-        MoveTo(cursor_pos.0, cursor_pos.1 + HEADER_HEIGHT),
+        MoveTo(cursor_pos.0 as u16, cursor_pos.1 as u16 + HEADER_HEIGHT),
         crossterm::cursor::Show
     )?;
     stdout.flush()?;
@@ -362,37 +362,37 @@ impl Log {
             timestamp: std::time::SystemTime::now(),
         }
     }
-    fn draw_log(&self, stdout: &mut std::io::Stdout, message: &str, height: usize, cursor_pos: (u16, u16)) -> std::io::Result<()> {
+    fn draw_log(&self, stdout: &mut std::io::Stdout, message: &str, height: usize, cursor_pos: (usize, usize)) -> std::io::Result<()> {
         // assert!(false, "This means the func is being called. #YAY");
         execute!(
             stdout,
             MoveTo(0, height as u16 + HEADER_HEIGHT),
             Clear(ClearType::CurrentLine),
             Print(message),
-            MoveTo(cursor_pos.0, cursor_pos.1 + HEADER_HEIGHT),
+            MoveTo(cursor_pos.0 as u16, cursor_pos.1 as u16 + HEADER_HEIGHT),
         )?;
         stdout.flush()?;
         Ok(())
     }
     
-    fn clear_log(&self, stdout: &mut std::io::Stdout, height: usize, cursor_pos: (u16, u16)) -> std::io::Result<()> {
+    fn clear_log(&self, stdout: &mut std::io::Stdout, height: usize, cursor_pos: (usize, usize)) -> std::io::Result<()> {
         execute!(
             stdout,
             MoveTo(0, height as u16 + HEADER_HEIGHT),
             Clear(ClearType::CurrentLine),
-            MoveTo(cursor_pos.0, cursor_pos.1 + HEADER_HEIGHT),
+            MoveTo(cursor_pos.0 as u16, cursor_pos.1 as u16 + HEADER_HEIGHT),
         )?;
         stdout.flush()?;
         Ok(())
     }
 
-    fn draw_debug(&self, stdout: &mut std::io::Stdout, message: &str, height: usize, cursor_pos: (u16, u16)) -> std::io::Result<()> {
+    fn draw_debug(&self, stdout: &mut std::io::Stdout, message: &str, height: usize, cursor_pos: (usize, usize)) -> std::io::Result<()> {
         execute!(
             stdout,
             MoveTo(0, height as u16 + HEADER_HEIGHT),
             Clear(ClearType::CurrentLine),
             Print(message.with(Color::DarkYellow)),
-            MoveTo(cursor_pos.0, cursor_pos.1 + HEADER_HEIGHT),
+            MoveTo(cursor_pos.0 as u16, cursor_pos.1 as u16 + HEADER_HEIGHT),
         )?;
         stdout.flush()?;
         Ok(())
