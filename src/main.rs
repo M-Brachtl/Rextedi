@@ -12,7 +12,7 @@ use crossterm::{
 use unicode_segmentation::UnicodeSegmentation;
 
 static HEADER_HEIGHT: u16 = 3;
-static DEBUG_MODE: bool = false;
+static DEBUG_MODE: bool = true;
 
 fn main() -> std::io::Result<()> {
     let mut stdout = stdout();
@@ -86,6 +86,7 @@ fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) ->
         None
     };
     // fs::write(Path::new("./debug.txt"), lines.last().unwrap_or(&String::from("not enough chars")).escape_debug().to_string())?;
+    cursor = (0, 0);
     init_draw(stdout, &lines, width, height)?;
     loop {
         draw(stdout, &lines[active_line], cursor, width as usize, hor_offset)?;
@@ -101,138 +102,144 @@ fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) ->
             }
         }
         // Block until key press (no infinite printing)
-        if let Event::Key(key) = read()? {
-            if key.kind == crossterm::event::KeyEventKind::Press {
-                match key.code {
-                    KeyCode::Char('q') => if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) { execute!(stdout, MoveTo(0, 0), LeaveAlternateScreen)?; break; } else {
-                        // lines[active_line].push('q');
-                        write_char(&mut lines[active_line], 'q', &mut cursor.0, &hor_offset);
-                    },
-                    KeyCode::Char('w') => if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
-                        if let Err(_) = save_file(file_name, lines.join(if crlf {"\r\n"} else {"\n"}), &mut log) {
-                            let f = fs::File::create(file_name);
-                            match f {
-                                Ok(mut file) => {
-                                    match file.write_all(lines.join(if crlf {"\r\n"} else {"\n"}).as_bytes()) {
-                                        Ok(_) => {
-                                            log = Some(Log::new("File saved".to_string()));
-                                        },
-                                        Err(e) => {
-                                            eprintln!("Failed to write to file: {}", e);
+        match read()? {
+        // if let Event::Key(key) = read()? {
+            Event::Key(key) => {
+                if key.kind == crossterm::event::KeyEventKind::Press {
+                    match key.code {
+                        KeyCode::Char('q') => if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) { execute!(stdout, MoveTo(0, 0), LeaveAlternateScreen)?; break; } else {
+                            // lines[active_line].push('q');
+                            write_char(&mut lines[active_line], 'q', &mut cursor.0, &hor_offset);
+                        },
+                        KeyCode::Char('w') => if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+                            if let Err(_) = save_file(file_name, lines.join(if crlf {"\r\n"} else {"\n"}), &mut log) {
+                                let f = fs::File::create(file_name);
+                                match f {
+                                    Ok(mut file) => {
+                                        match file.write_all(lines.join(if crlf {"\r\n"} else {"\n"}).as_bytes()) {
+                                            Ok(_) => {
+                                                log = Some(Log::new("File saved".to_string()));
+                                            },
+                                            Err(e) => {
+                                                eprintln!("Failed to write to file: {}", e);
+                                            }
+                                            
                                         }
-                                        
+                                    },
+                                    Err(e) => {
+                                        eprintln!("Failed to create file: {}", e);
                                     }
-                                },
-                                Err(e) => {
-                                    eprintln!("Failed to create file: {}", e);
                                 }
                             }
-                        }
-                    } else {
-                        write_char(&mut lines[active_line], 'w', &mut cursor.0, &hor_offset);
-                    }
-                    KeyCode::Char(c) => if !key.modifiers.contains(KeyModifiers::CONTROL) { write_char(&mut lines[active_line], c, &mut cursor.0, &hor_offset); }
-                    KeyCode::Backspace => {
-                        if cursor.0 > 0 {
-                            remove_char(&mut lines[active_line], &mut cursor.0, &hor_offset);
-                            execute!(stdout, MoveTo(cursor.0, cursor.1 + HEADER_HEIGHT))?;
-                        } else if cursor.1 > 0 && hor_offset == 0 {
-                            let removed_line_content = lines[active_line].clone();
-                            lines[active_line-1].push_str(&removed_line_content);
-                            lines.remove(active_line);
-                            if cursor.1 == 0 && active_line != 0 {
-                                ver_offset -= 1;
-                                move_text(ver_offset, &lines, cursor, stdout, width, height)?;
-                            }
-                            active_line -= 1;
-                            draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
-                            cursor.0 = lines[active_line].graphemes(true).count() as u16 - removed_line_content.graphemes(true).count() as u16;
-                            cursor.1 -= 1;
-                        }
-                    }
-                    KeyCode::Enter => {
-                        let byte_index = lines[active_line].grapheme_indices(true).nth((cursor.0 + hor_offset) as usize).map(|(i, _)| i).unwrap_or(lines[active_line].len());
-                        let new_line_content = lines[active_line].split_off(byte_index);
-                        lines.insert(active_line + 1, new_line_content);
-                        draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
-                        if cursor.1 + 1 == height as u16 {
-                            ver_offset += 1;
-                            move_text(ver_offset, &lines, cursor, stdout, width, height)?;
-                            cursor.1 = height as u16 - 1;
                         } else {
-                            cursor.1 += 1;
+                            write_char(&mut lines[active_line], 'w', &mut cursor.0, &hor_offset);
                         }
-                        hor_offset = 0;
-                        active_line += 1;
-                        cursor.0 = 0;
-                    },
-                    KeyCode::Left => {
-                        if key.modifiers.contains(KeyModifiers::CONTROL) {
-                            if hor_offset > 0 {
-                                hor_offset -= 1;
-                            }
-                        } else if cursor.0 > 0 {
-                            cursor.0 -= 1;
-                            execute!(stdout, MoveTo(cursor.0, cursor.1 + HEADER_HEIGHT))?;
-                        }
-                    },
-                    KeyCode::Right => {
-                        if key.modifiers.contains(KeyModifiers::CONTROL) {
-                            hor_offset += 1;
-                        } else if cursor.0 + hor_offset < lines[active_line].graphemes(true).count() as u16 {
-                            cursor.0 += 1;
-                            execute!(stdout, MoveTo(cursor.0, cursor.1 + HEADER_HEIGHT))?;
-                        }
-                    },
-                    KeyCode::Up => {
-                        if active_line > 0 {
-                            hor_offset = 0;
-                            draw(stdout, &lines[active_line], cursor, width as usize, hor_offset)?;
-                            // draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
-                            if cursor.1 == 0 && active_line > 0 {
-                                assert!(ver_offset > 0, "### This should not be happenig. VerOffset: {}, ActiveLine: {}", ver_offset, active_line);
-                                ver_offset -= 1;
-                                move_text(ver_offset, &lines, cursor, stdout, width, height)?;
-                            } else {
+                        KeyCode::Char(c) => if !key.modifiers.contains(KeyModifiers::CONTROL) { write_char(&mut lines[active_line], c, &mut cursor.0, &hor_offset); }
+                        KeyCode::Backspace => {
+                            if cursor.0 > 0 {
+                                remove_char(&mut lines[active_line], &mut cursor.0, &hor_offset);
+                                execute!(stdout, MoveTo(cursor.0, cursor.1 + HEADER_HEIGHT))?;
+                            } else if cursor.1 > 0 && hor_offset == 0 {
+                                let removed_line_content = lines[active_line].clone();
+                                lines[active_line-1].push_str(&removed_line_content);
+                                lines.remove(active_line);
+                                if cursor.1 == 0 && active_line != 0 {
+                                    ver_offset -= 1;
+                                    move_text(ver_offset, &lines, cursor, stdout, width, height)?;
+                                }
+                                active_line -= 1;
+                                draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
+                                cursor.0 = lines[active_line].graphemes(true).count() as u16 - removed_line_content.graphemes(true).count() as u16;
                                 cursor.1 -= 1;
                             }
-                            active_line -= 1;
-                            if cursor.0 + hor_offset > lines[active_line].graphemes(true).count() as u16 {
-                                cursor.0 = lines[active_line].graphemes(true).count() as u16 - hor_offset;
-                            }
-                            execute!(stdout, MoveTo(cursor.0, cursor.1 + HEADER_HEIGHT))?;
                         }
-                    },
-                    KeyCode::Down => {
-                        if active_line < lines.len() - 1 {
-                            hor_offset = 0;
-                            draw(stdout, &lines[active_line], cursor, width as usize, hor_offset)?;
-                            // draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
-                            active_line += 1;
-                            cursor.1 += 1;
-                            if cursor.0 + hor_offset > lines[active_line].graphemes(true).count() as u16 {
-                                cursor.0 = lines[active_line].graphemes(true).count() as u16 - hor_offset;
-                            } else if cursor.1 >= height as u16 {
+                        KeyCode::Enter => {
+                            let byte_index = lines[active_line].grapheme_indices(true).nth((cursor.0 + hor_offset) as usize).map(|(i, _)| i).unwrap_or(lines[active_line].len());
+                            let new_line_content = lines[active_line].split_off(byte_index);
+                            lines.insert(active_line + 1, new_line_content);
+                            draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
+                            if cursor.1 + 1 == height as u16 {
                                 ver_offset += 1;
                                 move_text(ver_offset, &lines, cursor, stdout, width, height)?;
                                 cursor.1 = height as u16 - 1;
+                            } else {
+                                cursor.1 += 1;
                             }
-                            execute!(stdout, MoveTo(cursor.0, cursor.1 + HEADER_HEIGHT))?;
-                        }
+                            hor_offset = 0;
+                            active_line += 1;
+                            cursor.0 = 0;
+                        },
+                        KeyCode::Left => {
+                            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                                if hor_offset > 0 {
+                                    hor_offset -= 1;
+                                }
+                            } else if cursor.0 > 0 {
+                                cursor.0 -= 1;
+                                execute!(stdout, MoveTo(cursor.0, cursor.1 + HEADER_HEIGHT))?;
+                            }
+                        },
+                        KeyCode::Right => {
+                            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                                hor_offset += 1;
+                            } else if cursor.0 + hor_offset < lines[active_line].graphemes(true).count() as u16 {
+                                cursor.0 += 1;
+                                execute!(stdout, MoveTo(cursor.0, cursor.1 + HEADER_HEIGHT))?;
+                            }
+                        },
+                        KeyCode::Up => {
+                            if active_line > 0 {
+                                hor_offset = 0;
+                                draw(stdout, &lines[active_line], cursor, width as usize, hor_offset)?;
+                                // draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
+                                if cursor.1 == 0 && active_line > 0 {
+                                    assert!(ver_offset > 0, "### This should not be happenig. VerOffset: {}, ActiveLine: {}", ver_offset, active_line);
+                                    ver_offset -= 1;
+                                    move_text(ver_offset, &lines, cursor, stdout, width, height)?;
+                                } else {
+                                    cursor.1 -= 1;
+                                }
+                                active_line -= 1;
+                                if cursor.0 + hor_offset > lines[active_line].graphemes(true).count() as u16 {
+                                    cursor.0 = lines[active_line].graphemes(true).count() as u16 - hor_offset;
+                                }
+                                execute!(stdout, MoveTo(cursor.0, cursor.1 + HEADER_HEIGHT))?;
+                            }
+                        },
+                        KeyCode::Down => {
+                            if active_line < lines.len() - 1 {
+                                hor_offset = 0;
+                                draw(stdout, &lines[active_line], cursor, width as usize, hor_offset)?;
+                                // draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
+                                active_line += 1;
+                                cursor.1 += 1;
+                                if cursor.0 + hor_offset > lines[active_line].graphemes(true).count() as u16 {
+                                    cursor.0 = lines[active_line].graphemes(true).count() as u16 - hor_offset;
+                                } else if cursor.1 >= height as u16 {
+                                    ver_offset += 1;
+                                    move_text(ver_offset, &lines, cursor, stdout, width, height)?;
+                                    cursor.1 = height as u16 - 1;
+                                }
+                                execute!(stdout, MoveTo(cursor.0, cursor.1 + HEADER_HEIGHT))?;
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+        // } else if let Event::Mouse(m) = read()? {
+            },
+            Event::Mouse(m) => {
+                match m.kind {
+                    MouseEventKind::Down(_) => {
+                        // code
+                    },
+                    MouseEventKind::Up(_) => {
+                        // code
                     },
                     _ => {}
                 }
-            }
-        } else if let Event::Mouse(m) = read()? {
-            match m.kind {
-                MouseEventKind::Down(_) => {
-                    // code
-                },
-                MouseEventKind::Up(_) => {
-                    // code
-                },
-                _ => {}
-            }
+            },
+            _ => {}
         }
     }
 
@@ -249,8 +256,8 @@ fn init_draw(stdout: &mut std::io::Stdout, lines: &Vec<String>, max_width: usize
         }
     }
     //assert!(display_lines.len() > max_height, "This should not be happenig. DLines: {}, MaxHeight: {}", display_lines.len(), max_height); // now should panic always
-    let header = " Rextedi \n".bold().with(Color::DarkMagenta).on(Color::White);
-    let subheader = "^Q to quit\t ^W to write into a file\t ^[→] to move line right\t ^[←] to move line left\n".with(Color::Blue);
+    let header = " Rextedi \r\n".bold().with(Color::DarkMagenta).on(Color::White);
+    let subheader = "^Q to quit\t ^W to write into a file\t ^[→] to move line right\t ^[←] to move line left\r\n".with(Color::Blue);
     execute!(
         stdout,
         crossterm::cursor::Show,
@@ -259,7 +266,8 @@ fn init_draw(stdout: &mut std::io::Stdout, lines: &Vec<String>, max_width: usize
         Print(header),
         Print(subheader),
         Print("─".repeat(max_width)), // Horizontal line after header
-        Print(display_lines.join("\n")),
+        Print(display_lines.join("\r\n")),
+        MoveTo(0,HEADER_HEIGHT),
     )?;
     stdout.flush()?;
     Ok(())
