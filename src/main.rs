@@ -1,3 +1,5 @@
+mod render;
+
 use std::{env, fs, io::{Write, stdout}, path::{Path, PathBuf}, vec};
 
 use crossterm::{
@@ -10,6 +12,9 @@ use crossterm::{
 };
 
 use unicode_segmentation::UnicodeSegmentation;
+use render::tui;
+
+use crate::render::tui::Editor;
 
 static HEADER_HEIGHT: u16 = 3;
 static DEBUG_MODE: bool = false; // Set to true to enable debug log at the bottom of the screen (overwrites normal log)
@@ -30,10 +35,12 @@ fn main() -> std::io::Result<()> {
         return Ok(());
     }
     // Enable raw mode
-    enable_raw_mode()?;
-    execute!(stdout, Clear(ClearType::All), EnterAlternateScreen, Hide)?;
+    //enable_raw_mode()?;
+    //execute!(stdout, Clear(ClearType::All), EnterAlternateScreen, Hide)?;
+    let window = tui::Window::new();
+    let mut editor = tui::Editor::new(window.width, window.height);
 
-    let result = run(&mut stdout, file_content, filepath.as_path());
+    let result = run(&mut editor, file_content, filepath.as_path());
 
     // ALWAYS restore terminal
     disable_raw_mode()?;
@@ -65,7 +72,7 @@ fn save_file(file_name: &Path, content: String, log: &mut Option<Log>) -> std::i
     }
 }
 
-fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) -> std::io::Result<()> {
+fn run(editor: &mut tui::Editor, starting_text: String, file_name: &Path) -> std::io::Result<()> {
     // let mut input = String::new();
     let crlf = starting_text.contains("\r\n"); // If no end-of-line is found or new file, default to LF
     let mut lines = if starting_text != "" {
@@ -87,9 +94,11 @@ fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) ->
     };
     // fs::write(Path::new("./debug.txt"), lines.last().unwrap_or(&String::from("not enough chars")).escape_debug().to_string())?;
     // cursor = (0, 0);
-    init_draw(stdout, &lines, width, height)?;
+    // init_draw(stdout, &lines, width, height)?;
+    let stdout = &mut stdout();
     loop {
-        draw(stdout, &lines[active_line], cursor, width as usize, hor_offset)?;
+        // draw(stdout, &lines[active_line], cursor, width as usize, hor_offset)?;
+        editor.update_line(active_line)?;
         if DEBUG_MODE {
             debug_log.as_ref().unwrap().draw_debug(stdout, &format!("Debug log: ActiveLine: {}, Cursor: ({}, {}), HorOffset: {}, VerOffset: {}, LineLen: {}, CurCharRepr: {}", active_line, cursor.0, cursor.1, hor_offset, ver_offset, lines[active_line].graphemes(true).count(), lines[active_line].graphemes(true).nth((cursor.0 + hor_offset) as usize).unwrap_or("\0").escape_debug()), height, cursor)?;
         }
@@ -109,7 +118,8 @@ fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) ->
                     match key.code {
                         KeyCode::Char('q') => if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) { execute!(stdout, MoveTo(0, 0), LeaveAlternateScreen)?; break; } else {
                             // lines[active_line].push('q');
-                            write_char(&mut lines[active_line], 'q', &mut cursor.0, &hor_offset);
+                            // write_char(&mut lines[active_line], 'q', &mut cursor.0, &hor_offset);
+                            editor.write(active_line, cursor.0, 'q');
                         },
                         KeyCode::Char('w') => if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
                             if let Err(_) = save_file(file_name, lines.join(if crlf {"\r\n"} else {"\n"}), &mut log) {
@@ -132,9 +142,12 @@ fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) ->
                                 }
                             }
                         } else {
-                            write_char(&mut lines[active_line], 'w', &mut cursor.0, &hor_offset);
+                            // write_char(&mut lines[active_line], 'w', &mut cursor.0, &hor_offset);
+                            editor.write(active_line, cursor.0, 'w');
                         }
-                        KeyCode::Char(c) => if !key.modifiers.contains(KeyModifiers::CONTROL) { write_char(&mut lines[active_line], c, &mut cursor.0, &hor_offset); }
+                        KeyCode::Char(c) => if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                            editor.write(active_line, cursor.0, c);
+                        }
                         KeyCode::Backspace => {
                             if cursor.0 > 0 {
                                 remove_char(&mut lines[active_line], &mut cursor.0, &hor_offset);
@@ -190,7 +203,8 @@ fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) ->
                         KeyCode::Up => {
                             if active_line > 0 {
                                 hor_offset = 0;
-                                draw(stdout, &lines[active_line], cursor, width as usize, hor_offset)?;
+                                // draw(stdout, &lines[active_line], cursor, width as usize, hor_offset)?;
+                                editor.update_line(active_line)?; //?//
                                 // draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
                                 if cursor.1 == 0 && active_line > 0 {
                                     assert!(ver_offset > 0, "### This should not be happenig. VerOffset: {}, ActiveLine: {}", ver_offset, active_line);
@@ -209,7 +223,8 @@ fn run(stdout: &mut std::io::Stdout, starting_text: String, file_name: &Path) ->
                         KeyCode::Down => {
                             if active_line < lines.len() - 1 {
                                 hor_offset = 0;
-                                draw(stdout, &lines[active_line], cursor, width as usize, hor_offset)?;
+                                // draw(stdout, &lines[active_line], cursor, width as usize, hor_offset)?;
+                                editor.update_line(active_line)?; //?//
                                 // draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
                                 active_line += 1;
                                 cursor.1 += 1;
