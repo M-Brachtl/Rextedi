@@ -13,8 +13,7 @@ use crossterm::{
 
 use unicode_segmentation::UnicodeSegmentation;
 use render::tui;
-
-use crate::render::tui::Editor;
+use render::Direction;
 
 static HEADER_HEIGHT: u16 = 3;
 static DEBUG_MODE: bool = false; // Set to true to enable debug log at the bottom of the screen (overwrites normal log)
@@ -119,7 +118,7 @@ fn run(editor: &mut tui::Editor, starting_text: String, file_name: &Path) -> std
                         KeyCode::Char('q') => if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) { execute!(stdout, MoveTo(0, 0), LeaveAlternateScreen)?; break; } else {
                             // lines[active_line].push('q');
                             // write_char(&mut lines[active_line], 'q', &mut cursor.0, &hor_offset);
-                            editor.write(active_line, cursor.0, 'q');
+                            editor.write_char('q');
                         },
                         KeyCode::Char('w') => if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
                             if let Err(_) = save_file(file_name, lines.join(if crlf {"\r\n"} else {"\n"}), &mut log) {
@@ -143,14 +142,16 @@ fn run(editor: &mut tui::Editor, starting_text: String, file_name: &Path) -> std
                             }
                         } else {
                             // write_char(&mut lines[active_line], 'w', &mut cursor.0, &hor_offset);
-                            editor.write(active_line, cursor.0, 'w');
+                            editor.write_char('w');
                         }
                         KeyCode::Char(c) => if !key.modifiers.contains(KeyModifiers::CONTROL) {
-                            editor.write(active_line, cursor.0, c);
+                            editor.write_char(c);
                         }
                         KeyCode::Backspace => {
-                            if cursor.0 > 0 {
-                                remove_char(&mut lines[active_line], &mut cursor.0, &hor_offset);
+                            editor.delete_char();
+                            /*if cursor.0 > 0 {
+                                // remove_char(&mut lines[active_line], &mut cursor.0, &hor_offset);
+                                editor.delete(active_line, cursor.0);
                                 execute!(stdout, MoveTo(cursor.0 as u16, cursor.1 as u16 + HEADER_HEIGHT))?;
                             } else if cursor.1 > 0 && hor_offset == 0 {
                                 let removed_line_content = lines[active_line].clone();
@@ -164,79 +165,86 @@ fn run(editor: &mut tui::Editor, starting_text: String, file_name: &Path) -> std
                                 draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
                                 cursor.0 = lines[active_line].graphemes(true).count() - removed_line_content.graphemes(true).count();
                                 cursor.1 -= 1;
-                            }
+                            }*/
                         }
                         KeyCode::Enter => {
-                            let byte_index = lines[active_line].grapheme_indices(true).nth((cursor.0 + hor_offset) as usize).map(|(i, _)| i).unwrap_or(lines[active_line].len());
-                            let new_line_content = lines[active_line].split_off(byte_index);
-                            lines.insert(active_line + 1, new_line_content);
-                            draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
-                            if cursor.1 + 1 == height {
-                                ver_offset += 1;
-                                move_text(ver_offset, &lines, cursor, stdout, width, height)?;
-                                cursor.1 = height - 1;
-                            } else {
-                                cursor.1 += 1;
-                            }
-                            hor_offset = 0;
-                            active_line += 1;
-                            cursor.0 = 0;
+                            // let byte_index = lines[active_line].grapheme_indices(true).nth((cursor.0 + hor_offset) as usize).map(|(i, _)| i).unwrap_or(lines[active_line].len());
+                            // let new_line_content = lines[active_line].split_off(byte_index);
+                            // lines.insert(active_line + 1, new_line_content);
+                            // draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
+                            // if cursor.1 + 1 == height {
+                            //     ver_offset += 1;
+                            //     move_text(ver_offset, &lines, cursor, stdout, width, height)?;
+                            //     cursor.1 = height - 1;
+                            // } else {
+                            //     cursor.1 += 1;
+                            // }
+                            // hor_offset = 0;
+                            // active_line += 1;
+                            // cursor.0 = 0;
+                            editor.insert_newline();
                         },
                         KeyCode::Left => {
                             if key.modifiers.contains(KeyModifiers::CONTROL) {
-                                if hor_offset > 0 {
-                                    hor_offset -= 1;
-                                }
-                            } else if cursor.0 > 0 {
-                                cursor.0 -= 1;
-                                execute!(stdout, MoveTo(cursor.0 as u16, cursor.1 as u16 + HEADER_HEIGHT))?;
+                                // if hor_offset > 0 {
+                                //     hor_offset -= 1;
+                                // }
+                            } else /*if cursor.0 > 0*/ {
+                                // cursor.0 -= 1;
+                                // editor.cursor.0 -= 1;
+                                // execute!(stdout, MoveTo(cursor.0 as u16, cursor.1 as u16 + HEADER_HEIGHT))?;
+                                editor.move_cursor(Direction::Left);
                             }
                         },
                         KeyCode::Right => {
                             if key.modifiers.contains(KeyModifiers::CONTROL) {
                                 hor_offset += 1;
-                            } else if cursor.0 + hor_offset < lines[active_line].graphemes(true).count() {
+                            } else /*if cursor.0 + hor_offset < lines[active_line].graphemes(true).count() {
                                 cursor.0 += 1;
                                 execute!(stdout, MoveTo(cursor.0 as u16, cursor.1 as u16 + HEADER_HEIGHT))?;
+                            }*/ {
+                                editor.move_cursor(Direction::Right);
                             }
                         },
                         KeyCode::Up => {
-                            if active_line > 0 {
-                                hor_offset = 0;
-                                // draw(stdout, &lines[active_line], cursor, width as usize, hor_offset)?;
-                                editor.update_line(active_line)?; //?//
-                                // draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
-                                if cursor.1 == 0 && active_line > 0 {
-                                    assert!(ver_offset > 0, "### This should not be happenig. VerOffset: {}, ActiveLine: {}", ver_offset, active_line);
-                                    ver_offset -= 1;
-                                    move_text(ver_offset, &lines, cursor, stdout, width, height)?;
-                                } else {
-                                    cursor.1 -= 1;
-                                }
-                                active_line -= 1;
-                                if cursor.0 + hor_offset > lines[active_line].graphemes(true).count() {
-                                    cursor.0 = lines[active_line].graphemes(true).count() - hor_offset;
-                                }
-                                execute!(stdout, MoveTo(cursor.0 as u16, cursor.1 as u16 + HEADER_HEIGHT))?;
-                            }
+                            // if active_line > 0 {
+                            //     hor_offset = 0;
+                            //     // draw(stdout, &lines[active_line], cursor, width as usize, hor_offset)?;
+                            //     editor.update_line(active_line)?; //?//
+                            //     // draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
+                            //     if cursor.1 == 0 && active_line > 0 {
+                            //         assert!(ver_offset > 0, "### This should not be happenig. VerOffset: {}, ActiveLine: {}", ver_offset, active_line);
+                            //         ver_offset -= 1;
+                            //         move_text(ver_offset, &lines, cursor, stdout, width, height)?;
+                            //     } else {
+                            //         cursor.1 -= 1;
+                            //     }
+                            //     active_line -= 1;
+                            //     if cursor.0 + hor_offset > lines[active_line].graphemes(true).count() {
+                            //         cursor.0 = lines[active_line].graphemes(true).count() - hor_offset;
+                            //     }
+                            //     execute!(stdout, MoveTo(cursor.0 as u16, cursor.1 as u16 + HEADER_HEIGHT))?;
+                            // }
+                            editor.move_cursor(Direction::Up);
                         },
                         KeyCode::Down => {
-                            if active_line < lines.len() - 1 {
-                                hor_offset = 0;
-                                // draw(stdout, &lines[active_line], cursor, width as usize, hor_offset)?;
-                                editor.update_line(active_line)?; //?//
-                                // draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
-                                active_line += 1;
-                                cursor.1 += 1;
-                                if cursor.0 + hor_offset > lines[active_line].graphemes(true).count() {
-                                    cursor.0 = lines[active_line].graphemes(true).count() - hor_offset;
-                                } else if cursor.1 >= height {
-                                    ver_offset += 1;
-                                    move_text(ver_offset, &lines, cursor, stdout, width, height)?;
-                                    cursor.1 = height - 1;
-                                }
-                                execute!(stdout, MoveTo(cursor.0 as u16, cursor.1 as u16 + HEADER_HEIGHT))?;
-                            }
+                            // if active_line < lines.len() - 1 {
+                            //     hor_offset = 0;
+                            //     // draw(stdout, &lines[active_line], cursor, width as usize, hor_offset)?;
+                            //     editor.update_line(active_line)?; //?//
+                            //     // draw_new_line(stdout, &lines, cursor, width as usize, height, ver_offset)?;
+                            //     active_line += 1;
+                            //     cursor.1 += 1;
+                            //     if cursor.0 + hor_offset > lines[active_line].graphemes(true).count() {
+                            //         cursor.0 = lines[active_line].graphemes(true).count() - hor_offset;
+                            //     } else if cursor.1 >= height {
+                            //         ver_offset += 1;
+                            //         move_text(ver_offset, &lines, cursor, stdout, width, height)?;
+                            //         cursor.1 = height - 1;
+                            //     }
+                            //     execute!(stdout, MoveTo(cursor.0 as u16, cursor.1 as u16 + HEADER_HEIGHT))?;
+                            // }
+                            editor.move_cursor(Direction::Down);
                         },
                         _ => {}
                     }

@@ -7,6 +7,8 @@ pub mod tui {
     use crossterm::cursor::{MoveTo, Hide, Show};
     use unicode_segmentation::UnicodeSegmentation;
 
+    use crate::move_text;
+
     static HEADER_HEIGHT: u16 = 3;
 
     fn grapheme_length(line: &str, len: usize) -> usize {
@@ -38,12 +40,44 @@ pub mod tui {
             }
         }
 
-        pub fn write(&mut self, line_index: usize, col_index: usize, char: char) {
-            let line = &mut self.content[line_index];
-            let byte_index = grapheme_getindex(line, self.cursor.0 + col_index);
+        pub fn write_char(&mut self, char: char) {
+            let line = &mut self.content[self.cursor.1];
+            let byte_index = grapheme_getindex(line, self.cursor.0 + self.local_hor_offset);
             line.insert(byte_index, char);
             self.cursor.0 += 1;
-            // self.update_line(line_index)
+            self.update_line(self.cursor.1).unwrap();
+        }
+
+        pub fn delete_char(&mut self) {
+            if self.cursor.0 == 0 && self.cursor.1 == 0 {
+                return; // Nothing to delete
+            }
+            if self.cursor.0 == 0 {
+                // Merge with previous line
+                let prev_line_len = self.content[self.cursor.1 - 1].graphemes(true).count();
+                let current_line = self.content.remove(self.cursor.1);
+                self.content[self.cursor.1 - 1].push_str(&current_line);
+                self.cursor.0 = prev_line_len;
+                self.cursor.1 -= 1;
+            } else {
+                let line = &mut self.content[self.cursor.1];
+                let byte_index = grapheme_getindex(line, self.cursor.0 - 1);
+                line.remove(byte_index);
+                self.cursor.0 -= 1;
+            }
+            self.update_line(self.cursor.1).unwrap();
+        }
+
+        pub fn insert_newline(&mut self) {
+            let line = &mut self.content[self.cursor.1];
+            let byte_index = grapheme_getindex(line, self.cursor.0);
+            let new_line = line.split_off(byte_index);
+            self.content.insert(self.cursor.1 + 1, new_line);
+            self.local_hor_offset = 0; // reset local horizontal offset when moving vertically
+            // self.update_line(self.cursor.1).unwrap();
+            self.update_cursor_down().unwrap();
+            self.cursor.1 += 1;
+            self.cursor.0 = 0;
         }
 
         fn move_visible(&self) {
@@ -62,6 +96,63 @@ pub mod tui {
                 crossterm::cursor::Show
             )?;
             stdout().flush()
+        }
+        pub fn update_cursor_down(&mut self) -> Result<(), std::io::Error> {
+            let (_, moved_lines) = self.content.split_at((self.cursor.1 + self.ver_offset) as usize);
+            queue!(stdout(), crossterm::cursor::Hide, Clear(ClearType::FromCursorDown))?;
+            if self.ver_offset > moved_lines.len() {
+                queue!(
+                    stdout(),
+                    MoveTo(0, self.cursor.1 as u16 + HEADER_HEIGHT),
+                    // Clear(ClearType::CurrentLine),
+                )?;
+                stdout().flush()?;
+                return Ok(()); // No need to redraw if the new line is outside the current view
+            }
+            for (index, line) in moved_lines[self.ver_offset as usize..].iter().take(self.height - (self.cursor.1 + self.ver_offset) as usize).enumerate(){
+                queue!(
+                    stdout(),
+                    MoveTo(0, self.cursor.1 as u16 + index as u16 + HEADER_HEIGHT),
+                    Clear(ClearType::CurrentLine),
+                    Print(if line.graphemes(true).count() > self.width {
+                        line.split_at(self.width).0
+                    } else {
+                        line
+                    }),
+                )?;
+            }
+            queue!(
+                stdout(),
+                MoveTo(self.cursor.0 as u16, self.cursor.1 as u16 + HEADER_HEIGHT),
+                crossterm::cursor::Show
+            )?;
+            stdout().flush()
+        }
+        pub fn move_cursor(&mut self, direction: super::Direction){
+            if matches!(direction, super::Direction::Up | super::Direction::Down) {
+                self.local_hor_offset = 0;
+                self.update_line(self.cursor.1).unwrap();
+            }
+            let orig_ver_offset = self.ver_offset;
+            match direction {
+                super::Direction::Up => self.cursor.1 -= if self.cursor.1 > 0 { 1 } else if self.ver_offset > 0 { self.ver_offset -= 1; 1 } else { 0 },
+                super::Direction::Down => self.cursor.1 += if self.cursor.1 + 1 < self.height && self.ver_offset + 1 < self.content.len() { 1 } else if self.ver_offset + 1 < self.content.len() { self.ver_offset += 1; 1 } else { 0 },
+                super::Direction::Left => self.cursor.0 -= if self.cursor.0 > 0 { 1 } else { 0 },
+                super::Direction::Right => {
+                    if self.cursor.0 + self.local_hor_offset < self.content[self.cursor.1].graphemes(true).count() {
+                        self.cursor.0 += 1;
+                    }
+                }
+            }
+            if self.cursor.0 + self.local_hor_offset >= self.content[self.cursor.1 + self.ver_offset].graphemes(true).count() {
+                self.cursor.0 = self.content[self.cursor.1 + self.ver_offset].graphemes(true).count() - self.local_hor_offset;
+            }
+            execute!(stdout(), MoveTo(self.cursor.0 as u16, self.cursor.1 as u16 + HEADER_HEIGHT)).unwrap();
+            if orig_ver_offset != self.ver_offset {
+                self.move_visible();
+            } else {
+                self.update_line(self.cursor.1).unwrap();
+            }
         }
     }
 
@@ -98,3 +189,4 @@ pub mod tui {
         }
     }
 }
+pub enum Direction { Up, Down, Left, Right }
