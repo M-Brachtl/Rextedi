@@ -5,9 +5,8 @@ use std::{env, fs, io::{Write, stdout}, path::{Path, PathBuf}, vec};
 use crossterm::{
     cursor::{MoveTo, Show},
     event::{Event, KeyCode, KeyModifiers, read, MouseEventKind},
-    execute, queue,
-    style::{Color, Print, Stylize}, terminal::{
-        Clear, ClearType, LeaveAlternateScreen, disable_raw_mode
+    execute, terminal::{
+        LeaveAlternateScreen, disable_raw_mode
     }
 };
 
