@@ -217,6 +217,9 @@ pub mod tui {
                     }
                 }
             }
+            if self.cursor.0 + self.local_hor_offset > grapheme_length(&self.content[self.cursor.1 + self.ver_offset]) {
+                self.cursor.0 = grapheme_length(&self.content[self.cursor.1 + self.ver_offset]) - self.local_hor_offset;
+            }
             execute!(stdout(), MoveTo(self.cursor.0 as u16, self.cursor.1 as u16 + HEADER_HEIGHT)).unwrap();
             if orig_ver_offset != self.ver_offset {
                 self.move_visible();
@@ -249,7 +252,7 @@ pub mod tui {
             execute!(
                 stdout(),
                 MoveTo(0, 0),
-                Print(header), 
+                Print(header),
                 Print(subheader),
                 Print("─".repeat(self.width)), // Horizontal line after header
                 MoveTo(0, HEADER_HEIGHT),
@@ -280,7 +283,7 @@ pub mod tui {
                 MoveTo(0, self.window.height as u16), // Position at the bottom of the editor area
                 Clear(ClearType::CurrentLine),
                 Print(("| ".to_string() + &self.contents.0 + " |").with(Color::DarkCyan)), // Main log content
-                Print(if self.add_info_lifetime > 0 { &self.contents.1 } else { "" }), // Additional info
+                Print((if self.add_info_lifetime > 0 { " ".to_string() + &self.contents.1 } else { "".to_string() }).with(Color::Cyan)), // Additional info
                 MoveTo(cursor.0 as u16, cursor.1 as u16 + HEADER_HEIGHT), // Move cursor back to its position
                 crossterm::cursor::Show
             )?;

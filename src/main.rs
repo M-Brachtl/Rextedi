@@ -137,7 +137,7 @@ fn run(mut editor: tui::Editor, window: tui::Window, starting_text: String, file
                                             Err(e) => {
                                                 eprintln!("Failed to write to file: {}", e);
                                             }
-                                            
+
                                         }
                                     },
                                     Err(e) => {
@@ -335,7 +335,7 @@ impl Log {
         stdout.flush()?;
         Ok(())
     }
-    
+
     fn clear_log(&self, stdout: &mut std::io::Stdout, height: usize, cursor_pos: (usize, usize)) -> std::io::Result<()> {
         execute!(
             stdout,
