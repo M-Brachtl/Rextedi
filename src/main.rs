@@ -49,12 +49,7 @@ fn main() -> std::io::Result<()> {
 }
 
 fn load_file(file_name: &Path) -> String {
-    match fs::read_to_string(file_name){
-        Ok(content) => content,
-        Err(_) => {
-            String::new()
-        },
-    }
+    fs::read_to_string(file_name).unwrap_or_default()
 }
 
 fn save_file(file_name: &Path, content: String, log: &mut Log, cursor: (usize, usize)) -> std::io::Result<()> {
@@ -76,7 +71,7 @@ fn save_file(file_name: &Path, content: String, log: &mut Log, cursor: (usize, u
 fn run(mut editor: tui::Editor, window: tui::Window, starting_text: String, file_name: &Path) -> std::io::Result<()> {
     // let mut input = String::new();
     let crlf = starting_text.contains("\r\n"); // If no end-of-line is found or new file, default to LF
-    let lines = if starting_text != "" {
+    let lines = if !starting_text.is_empty() {
         starting_text.replace("\r\n", "\n").split('\n').map(|text| text.to_string()).collect()
     } else {
         vec!["".to_string()]
@@ -124,7 +119,7 @@ fn run(mut editor: tui::Editor, window: tui::Window, starting_text: String, file
                             }
                         },
                         KeyCode::Char('w') => if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
-                            if let Err(_) = save_file(file_name, editor.content.join(if crlf {"\r\n"} else {"\n"}), &mut log, editor.cursor) {
+                            if save_file(file_name, editor.content.join(if crlf {"\r\n"} else {"\n"}), &mut log, editor.cursor).is_err() {
                                 let f = fs::File::create(file_name);
                                 match f {
                                     Ok(mut file) => {

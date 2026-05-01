@@ -46,7 +46,7 @@ pub mod tui {
             let active_line = self.active_line_index();
             let hor_offset = self.local_hor_offset;
             let ver_offset = self.ver_offset;
-            let cur_char_repr = self.content[active_line].graphemes(true).nth((self.cursor.0 + hor_offset) as usize).unwrap_or("\0").escape_debug().to_string();
+            let cur_char_repr = self.content[active_line].graphemes(true).nth(self.cursor.0 + hor_offset).unwrap_or("\0").escape_debug().to_string();
             (active_line, self.cursor.0, self.cursor.1, hor_offset, ver_offset, cur_char_repr)
         }
 
@@ -120,7 +120,7 @@ pub mod tui {
                 MoveTo(0, HEADER_HEIGHT),
                 Clear(ClearType::FromCursorDown)
             ).unwrap();
-            for (index, line) in self.content[self.ver_offset as usize..].iter().take(self.height).enumerate(){
+            for (index, line) in self.content[self.ver_offset..].iter().take(self.height).enumerate(){
                 queue!(
                     stdout,
                     MoveTo(0, index as u16 + HEADER_HEIGHT),
@@ -173,7 +173,7 @@ pub mod tui {
         }
         pub fn update_cursor_down(&mut self) -> Result<(), std::io::Error> {
             let mut stdout = stdout();
-            let cursor_down_content = &self.content[self.cursor.1 + self.ver_offset as usize..];
+            let cursor_down_content = &self.content[self.cursor.1 + self.ver_offset..];
             let cdown_len = cursor_down_content.len();
             queue!(
                 stdout,
@@ -181,7 +181,7 @@ pub mod tui {
                 MoveTo(0, self.cursor.1 as u16 + HEADER_HEIGHT),
                 Clear(ClearType::FromCursorDown)
             )?;
-            for (index, line) in cursor_down_content.iter().take(std::cmp::min(self.height - (self.cursor.1) as usize, cdown_len)).enumerate(){
+            for (index, line) in cursor_down_content.iter().take(std::cmp::min(self.height - self.cursor.1, cdown_len)).enumerate(){
                 queue!(
                     stdout,
                     MoveTo(0, self.cursor.1 as u16 + index as u16 + HEADER_HEIGHT),
